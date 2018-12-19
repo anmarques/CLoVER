@@ -1,0 +1,7 @@
+CLoVER.py (Contour Location Via Entropy Reduction)
+------------------------------------------------------------
+This software depends on the following Python packages:
+
+- numpy (www.numpy.org)
+- scipy (www.scipy,org)
+- nlopt (https://nlopt.readthedocs.io/en/latest/)
