@@ -14,9 +14,15 @@ small = 1.e-8
 
 class covarianceKernel(object):
 
-    def __init__(self, d):
-        self.d = d;
-        self.p = []
+    def __init__(self, d, p=[]):
+        self.d = d
+        hd = self.hyperparameterDimension()
+        if hd == 0:
+            self.p = []
+        elif hd == 1:
+            self.p = np.array([p])
+        else:
+            self.p = np.array(p)
     
 
     def __add__(self, other):
@@ -56,10 +62,7 @@ class covarianceKernel(object):
     
     
     def getHyperparameter(self):
-        if len(self.p) == 0:
-            return []
-        else:
-            return self.p.copy()
+        return self.p.copy()
     
     
     def setHyperparameter(self, p):
@@ -251,7 +254,6 @@ class kernelSquaredExponential(covarianceKernel):
         x1 = np.reshape(x1, (d, nx1))
         x2 = np.array(x2)
          
-        scl = np.diag(self.p[1:])
         if x2.size > 0:
             x2 = np.array(x2)
             nx2 = x2.size/d
@@ -280,32 +282,40 @@ class kernelSquaredExponential(covarianceKernel):
         
     
     def gradient(self, x1, x2):
-        x1 = np.array(x1)
-        x2 = np.array(x2)
         d = self.dimension()
+        x1 = np.array(x1)
         nx1 = x1.size/d
-        nx2 = x2.size/d
-        if d > 1:
-            x1 = np.reshape(x1, (d, nx1))
-            x2 = np.reshape(x2, (d, nx2))        
+        x1 = np.reshape(x1, (d, nx1))
+        x2 = np.array(x2)
+         
+        if x2.size > 0:
+            x2 = np.array(x2)
+            nx2 = x2.size/d
+            x2 = np.reshape(x2, (d, nx2))
+            
+            for i in range(d):
+                x1[i] = x1[i]/self.p[i+1]
+                x2[i] = x2[i]/self.p[i+1]
+                
+            dist2 = dist.cdist(x1.T, x2.T, 'sqeuclidean')
+        else:
+            for i in range(d):
+                x1[i] = x1[i]/self.p[i+1]
+
+            dist2 = dist.pdist(x1.T, 'sqeuclidean')
+            dist2 = dist.squareform(dist2)    
 
         dK = np.zeros((nx1, nx2, d + 1))
-        for i in range(nx1):
-            for j in range(nx2):
-                if d == 1:
-                    dist2 = ((x1[i] - x2[j])/self.p[1])**2
-                else:
-                    dist2 = 0.
-                    for k in range(d):
-                        dist2 += ((x1[k, i] - x2[k, j])/self.p[k+1])**2
-
-                aux = np.exp(-0.5*dist2)
-                dK[i, j, 0] = 2.*self.p[0]*aux
-                if d == 1:
-                    dK[i, j, 1] = (self.p[0]**2)*aux*((x1[i] - x2[j])**2)/(self.p[1]**3)
-                else:
-                    for k in range(d):
-                        dK[i, j, k+1] = (self.p[0]**2)*aux*((x1[k, i] - x2[k, j])**2)/(self.p[k+1]**3)
+        aux = np.exp(-0.5*dist2.copy())
+        dK[:, :, 0] = 2.*self.p[0]*aux
+        if d == 1:
+            dK[:, :, 1] = (self.p[0]**2)*aux*dist2/self.p[1]
+        else:
+            for i in range(d):
+                x1i = np.reshape(x1[i, :], (1, nx1))
+                x2i = np.reshape(x2[i, :], (1, nx2))
+                dist2 = dist.cdist(x1i.T, x2i.T, 'sqeuclidean')
+                dK[:, :, i] = (self.p[0]**2)*aux*dist2/self.p[i]
        
         return dK
     
@@ -313,26 +323,9 @@ class kernelSquaredExponential(covarianceKernel):
     def hyperparameterDimension(self):
         return self.dimension() + 1
         
-        
-    def hyperparameterGuess(self, x, y):
-        d = self.dimension()
-        x = np.array(x)
-        if d > 1:
-            nx = x.size/d
-            x = np.reshape(x, (d, nx))
-            
-        p = np.zeros(d+1)
-        p[0] = np.std(y)
-        if d == 1:
-            p[1] = np.max(x) - np.min(x)
-        else:
-            p[1:] = 0.1*(np.max(x, axis=1) - np.min(x, axis=1))
-            
-        return p
-    
     
     def hyperparameterLowerBound(self):
-        return np.array([small] + self.dimension()*[1.e-2])
+        return np.array([small]*(self.dimension() + 1))
         
 
     def hyperparameterUpperBound(self):
@@ -376,11 +369,7 @@ class kernelNoise(covarianceKernel):
     def hyperparameterDimension(self):
         return 1
         
-        
-    def hyperparameterGuess(self, x, y):
-        return np.array([0.1*np.std(y)])
-    
-    
+            
     def hyperparameterLowerBound(self):
         return np.array([small])
 

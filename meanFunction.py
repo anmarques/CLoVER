@@ -11,9 +11,15 @@ import numpy as np
 
 class meanFunction(object):
 
-    def __init__(self, d):
+    def __init__(self, d, p=[]):
         self.d = d;
-        self.p = []
+        hd = self.hyperparameterDimension()
+        if hd == 0:
+            self.p = []
+        elif hd == 1:
+            self.p = np.array([p])
+        else:
+            self.p = np.array(p)
     
 
     def __add__(self, other):
@@ -244,10 +250,6 @@ class meanConstant(meanFunction):
     def hyperparameterDimension(self):
         return 1
         
-        
-    def hyperparameterGuess(self, x, y):
-        return np.mean(y)
-    
     
     def hyperparameterLowerBound(self):
         return np.array([-float('inf')])
@@ -280,17 +282,6 @@ class meanLinear(meanFunction):
     def hyperparameterDimension(self):
         return self.dimension() + 1
         
-        
-    def hyperparameterGuess(self, x, y):
-        d = self.dimension()
-        nx = x.size/d
-        if x.ndim == 1:
-            x = np.reshape(x, (d, nx))
-            
-        A = np.matrix(np.concatenate((np.ones((nx, 1)), x.T), axis=1))
-        p = np.linalg.lstsq(A, y.T, rcond=None)[0]
-        return p.flatten()
-    
     
     def hyperparameterLowerBound(self):
         return np.array([-float('inf')]*(self.dimension() + 1))

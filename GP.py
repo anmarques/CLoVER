@@ -54,14 +54,7 @@ class GP(object):
             raise ValueError('GP object can only be added to other GP object')
             
         return plus
-        
-
-    def __radd__(self, other):
-        if other == 0:
-            return self
-        else:
-            return self + other
-            
+  
             
     def __mul__(self, other):
         if type(other) is int or type(other) is float or callable(other):
@@ -85,7 +78,14 @@ class GP(object):
         
         return prod
         
-        
+    
+    def __radd__(self, other):
+        if other == 0:
+            return self
+        else:
+            return self + other
+
+    
     def __rmul__(self, other):
         if other == 1:
             return self
@@ -93,6 +93,15 @@ class GP(object):
             return self * other
 
 
+    def applyKinverse(self, y):
+        y = np.array(y)
+        KiY = np.dot(self.U.T, y)
+        KiY = np.linalg.solve(np.diag(self.S), KiY)
+        KiY = np.dot(self.V.T, KiY)
+
+        return KiY
+            
+            
     def copy(self):
         mean = self.getMean()
         kernel = self.getKernel()
@@ -111,121 +120,21 @@ class GP(object):
             cp.KiY = self.KiY.copy()
 
         return cp
-        
-        
-    def getMean(self):
-        return self.mean.copy()
-        
-    
-    def getKernel(self):
-        return self.kernel.copy()
-        
-    
-    def getHyperparameter(self):
-        pm = self.mean.getHyperparameter()
-        pk = self.kernel.getHyperparameter()
-        
-        return pm, pk
-        
-        
-    def getRankTolerance(self):
-        return self.tolr
-        
-    
-    def getOptimizationOptions(self):
-        return self.nlopt
-        
-        
-    def getHyperparameterMethod(self):
-        return self.hyper
 
-
-    def setObservations(self, x, y):
-        x = np.array(x)
-        d = self.d
-        if d > 1:
-            nx = x.size/d
-            if nx == 1:
-                x = np.reshape(x, (d, nx))
-            
-        self.x = np.array(x)
-        self.y = np.array(y)
-    
-    
-    def setHyperparameter(self, pm, pk):
-        self.mean.setHyperparameter(pm)
-        self.kernel.setHyperparameter(pk)
-
-
-    def evaluateMean(self, x):
-        x = np.array(x)
-        if self.y.size == 0:
-            return self.mean.evaluate(x)
-        else:
-            if x.size > 0:
-                K = self.kernel.evaluate(x, self.x)
-                return self.mean.evaluate(x) + np.dot(K, self.KiY)
-            else:
-                K = self.kernel.evaluate(self.x, [])
-                return self.mean.evaluate(self.x) + np.dot(K, self.KiY)
-    
-
-    def evaluateCovariancePrior(self, x1, x2):
-        return self.kernel.evaluate(x1, x2)
-    
-
-    def evaluateVariancePrior(self, x):
-        if hasattr(self.kernel, 'evaluateDiagonal'):
-            return self.kernel.evaluateDiagonal(x)
-        else:
-            return np.diagonal(self.kernel.evaluate(x, []))
-    
-
-    def evaluateCovariance(self, x1, x2):
-        K = self.evaluateCovariancePrior(x1, x2)
-        if len(self.y) == 0:
-            return K
-        else:
-            K1t = self.evaluateCovariancePrior(x1, self.x)
-            x2 = np.array(x2)
-            if x2.size > 0:
-                Kt2 = self.evaluateCovariancePrior(self.x, x2)
-                return K - np.dot(K1t, self.applyKinverse(Kt2))
-            else:
-                return K - np.dot(K1t, self.applyKinverse(K1t.T))
-
-
-    def evaluateVariance(self, x):
-        V = self.evaluateVariancePrior(x)
-        if len(self.y) == 0:
-            return V
-        else:
-            Kxt = self.evaluateCovariancePrior(x, self.x)
-            return V - np.diagonal(np.dot(Kxt, self.applyKinverse(Kxt.T)))
-        
-
-    def applyKinverse(self, y):
-        y = np.array(y)
-        KiY = np.dot(self.U.T, y)
-        KiY = np.linalg.solve(np.diag(self.S), KiY)
-        KiY = np.dot(self.V.T, KiY)
-
-        return KiY
-        
 
     def decomposeCovariance(self):
-        K = self.kernel.evaluate(self.x, [])
+        K = self.evaluateCovariancePrior(self.x, [])
         U, S, V = np.linalg.svd(K, full_matrices=0, compute_uv=1)
-        r = np.sum(S/S[0] > self.tolr)
+        r = np.sum(S > self.tolr)
         self.U = U[:, :r]
         self.S = S[:r]
         self.V = V[:r, :]
-        self.KiY = self.applyKinverse(self.y - self.mean.evaluate(self.x))
+        self.KiY = self.applyKinverse(self.y - self.evaluateMeanPrior(self.x))
         
     
     def dimension(self):
         return self.d
-
+        
 
     def estimateHyperparameter(self):
         temp = self.copy()
@@ -251,57 +160,130 @@ class GP(object):
         pu = []
         if nmp > 0:
             pm0 = self.mean.getHyperparameter()
-            if len(pm0) == 0:
-                pm0 = self.mean.hyperparameterGuess(self.x, self.y)
-
             p0 = pm0
             pl = self.mean.hyperparameterLowerBound()
             pu = self.mean.hyperparameterUpperBound()
         
         if nkp > 0:   
             pk0 = self.kernel.getHyperparameter()
-            if len(pk0) == 0:
-                pk0 = self.kernel.hyperparameterGuess(self.x, self.y)
-
-            p0 = np.concatenate((p0, pk0))
             pkl = self.kernel.hyperparameterLowerBound()
             pku = self.kernel.hyperparameterUpperBound()
 
+            p0 = np.concatenate((p0, pk0))
             pl = np.concatenate((pl, pkl))
             pu = np.concatenate((pu, pku))
 
         if self.nlopt == 'default':
+            opt = nlopt.opt(nlopt.GN_DIRECT, ntp)
+            opt.set_lower_bounds(np.maximum(pl, p0*(1. - 1./np.sqrt(2))))
+            opt.set_upper_bounds(np.minimum(pu, p0*(1. + 1./np.sqrt(2))))
+            opt.set_max_objective(logLikelihoodParameter)
+            opt.set_xtol_rel(1.e-4)
+            opt.set_maxeval(500*ntp)
+            p0 = opt.optimize(p0)
+
             opt = nlopt.opt(nlopt.LD_MMA, ntp)
             opt.set_lower_bounds(pl)
             opt.set_upper_bounds(pu)
             opt.set_max_objective(logLikelihoodParameter)
             opt.set_xtol_rel(1.e-4)
-            opt.set_maxeval(10**ntp)
+            opt.set_maxeval(500*ntp)
+            p = opt.optimize(p0)
             
         else:
             opt = self.nlopt
+            p = opt.optimize(p0)
 
-        p = opt.optimize(p0)
         
         pm = p[:nmp]
         pk = p[nmp:]
         
         self.setHyperparameter(pm, pk)
-            
 
-    def hyperparameterDimension(self):
-        nmp = self.mean.hyperparameterDimension()
-        nkp = self.kernel.hyperparameterDimension()
         
-        return nmp, nkp
+    def evaluateMean(self, x):
+        x = np.array(x)
+        if x.size > 0:
+            m = self.evaluateMeanPrior(x)
+        else:
+            m = self.evaluateMeanPrior(self.x)
+
+        if self.y.size == 0:
+            return m
+        else:
+            if x.size > 0:
+                K = self.kernel.evaluate(x, self.x)
+            else:
+                K = self.kernel.evaluate(self.x, [])
+
+            return m + np.dot(K, self.KiY)
+    
+
+    def evaluateMeanPrior(self, x):
+        x = np.array(x)
+        return self.mean.evaluate(x)
+
+
+    def evaluateCovariance(self, x1, x2):
+        K = self.evaluateCovariancePrior(x1, x2)
+        if len(self.y) == 0:
+            return K
+        else:
+            K1t = self.evaluateCovariancePrior(x1, self.x)
+            x2 = np.array(x2)
+            if x2.size > 0:
+                Kt2 = self.evaluateCovariancePrior(self.x, x2)
+                return K - np.dot(K1t, self.applyKinverse(Kt2))
+            else:
+                return K - np.dot(K1t, self.applyKinverse(K1t.T))
+
+
+    def evaluateCovariancePrior(self, x1, x2):
+        return self.kernel.evaluate(x1, x2)
+    
+
+    def evaluateVariance(self, x):
+        V = self.evaluateVariancePrior(x)
+        if len(self.y) == 0:
+            return V
+        else:
+            Kxt = self.evaluateCovariancePrior(x, self.x)
+            return V - np.diagonal(np.dot(Kxt, self.applyKinverse(Kxt.T)))
         
 
-    def logLikelihood(self):
-        y = self.y.copy() - self.mean.evaluate(self.x)
-        logDetK = np.sum(np.log(self.S))
-        n = np.size(y)
-        return -0.5*(np.dot(y.T, self.KiY) + logDetK + n*np.log(2.*np.pi))
+    def evaluateVariancePrior(self, x):
+        if hasattr(self.kernel, 'evaluateDiagonal'):
+            return self.kernel.evaluateDiagonal(x)
+        else:
+            return np.diagonal(self.kernel.evaluate(x, []))
+
+
+    def getHyperparameter(self):
+        pm = self.mean.getHyperparameter()
+        pk = self.kernel.getHyperparameter()
         
+        return pm, pk
+        
+
+    def getHyperparameterMethod(self):
+        return self.hyper
+        
+        
+    def getKernel(self):
+        return self.kernel.copy()
+
+        
+    def getMean(self):
+        return self.mean.copy()
+                
+
+    def getOptimizationOptions(self):
+        return self.nlopt
+
+                
+    def getRankTolerance(self):
+        return self.tolr
+
         
     def gradientLogLikelihood(self):
         y = self.y - self.mean.evaluate(self.x)
@@ -327,6 +309,37 @@ class GP(object):
                     grad[i+nmp] -= 0.5*trKidK
                 
         return grad
+        
+
+    def hyperparameterDimension(self):
+        nmp = self.mean.hyperparameterDimension()
+        nkp = self.kernel.hyperparameterDimension()
+        
+        return nmp, nkp
+        
+        
+    def logLikelihood(self):
+        y = self.y.copy() - self.mean.evaluate(self.x)
+        logDetK = np.sum(np.log(self.S))
+        n = np.size(y)
+        return -0.5*(np.dot(y.T, self.KiY) + logDetK + n*np.log(2.*np.pi))
+        
+        
+    def setHyperparameter(self, pm, pk):
+        self.mean.setHyperparameter(pm)
+        self.kernel.setHyperparameter(pk)
+        
+
+    def setObservations(self, x, y):
+        x, y = uniqueObservations(x, y)
+        d = self.dimension()
+        nx = y.size
+        if nx == 1:
+            x = np.reshape(x, (d, nx))
+            y = np.array([y])
+            
+        self.x = x
+        self.y = y
 
         
     def train(self, x, y):
@@ -341,56 +354,37 @@ class GP(object):
        
     
     def update(self, x, y):
-        if d > 1:
-            nx = x.size/d
-            if nx == 1:
-                x = np.reshape(x, (d, nx))
-        x, y = uniqueObservations(self.x, self.y, x, y, self.d)
-        self.train(x, y)
+        d = self.dimension()
+        x = np.array(x)
+        y = np.array(y)
+        nx = y.size
+        if nx == 1:
+            x = np.reshape(x, (d, nx))
+            y = np.array([y])
+        
+        xNew = np.concatenate((self.x, x), axis=1)
+        yNew = np.concatenate((self.y, y))        
+        self.train(xNew, yNew)
 
 
 # --- end of GP class ---
 
-def uniqueObservations(x1, y1, x2, y2, d):
-    x1 = np.array(x1)
-    x2 = np.array(x2)
-    nx1 = x1.size/d
-    nx2 = x2.size/d
+def uniqueObservations(x, y):
+    x = np.array(x)
+    y = np.array(y)
+    nx = y.size
+    d = x.size/nx
     
-    if nx1 == 0 and nx2 == 0:
-        x = []
-        y = []
-    elif nx1 > 0 and nx2 == 0:
-        x = np.array(x1)
-        y = np.array(y1)
-        source = source1.copy()
-    elif nx1 == 0 and nx2 > 0:
-        x = np.array(x2)
-        y = np.array(y2)
-        source = source2.copy()
-    else:
-        y1 = np.array(y1)
-        if nx1 == 1:
-            y1 = np.array([y1])
-            if d > 1:
-                x1 = np.reshape(x1, (d, 1))
-                  
-        y2 = np.array(y2)
-        if nx2 == 1:
-            y2 = np.array([y2])
-            if d > 1:
-                x2 = np.reshape(x2, (d, 1))
+    if nx > 1:
+        if d == 1:
+            x = np.reshape(x, (d, nx))
 
-        dx = dist.cdist(x1.T, x2.T, 'euclidean')
-        iNew = np.argwhere(np.all(dx > 1e-10, axis=0)).flatten()
-        nNew = iNew.size
-        if nNew > 0:
-            y2 = y2[iNew].flatten()
-            y = np.concatenate((y1, y2))
-            if d == 1:
-                x2 = x2[iNew].flatten()
-                x = np.concatenate((x1, x2))
-            else:
-                x = np.concatenate((x1, x2[:, iNew]), axis=1)
-
-        return x, y
+        _, indx = np.unique(x, return_index=True, axis=1)
+        indx = np.sort(indx.flatten()).tolist()
+        
+        x = x[:, indx]
+        y = y[indx]
+        if d == 1:
+            x = x.flatten()
+    
+    return x, y
